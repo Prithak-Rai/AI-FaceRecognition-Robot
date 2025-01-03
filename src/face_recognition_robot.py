@@ -6,7 +6,6 @@ from facenet_pytorch import MTCNN, InceptionResnetV1
 import numpy as np
 import torchvision.transforms as transforms
 
-# Initialize MTCNN and ResNet
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -98,7 +97,7 @@ while True:
     # Draw bounding boxes and process detected faces
     if faces is not None and probs is not None:
         for i, box in enumerate(faces):
-            if probs[i] < 0.9:  # Confidence threshold
+            if probs[i] < 0.9: 
                 continue
 
             x1, y1, x2, y2 = map(int, box)
