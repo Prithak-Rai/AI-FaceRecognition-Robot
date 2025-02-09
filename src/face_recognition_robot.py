@@ -131,7 +131,7 @@ while True:
 
     # Calculate FPS
     end_time = time.time()
-    fps = 1 / (end_time - start_time) if end_time > start_time else 0
+    fps = 1 / (ennnd_time - start_time) if end_time > start_time else 0
     fps_list.append(fps)
     if len(fps_list) > 30:  # Smooth FPS over last 30 frames
         fps_list.pop(0)
