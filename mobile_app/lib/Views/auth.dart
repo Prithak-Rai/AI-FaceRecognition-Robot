@@ -19,14 +19,14 @@ class AuthScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Text(
-                "Authentication",
+                "Let’s Get Started!",
                 style: TextStyle(
                     fontSize: 35,
                     fontWeight: FontWeight.bold,
                     color: primaryColor),
               ),
               const Text(
-                "Authenticate to access your vital information",
+                "Welcome to Your Robot Security Hub",
                 style: TextStyle(color: Colors.grey),
               ),
               Expanded(child: Image.asset("assets/startup.jpg")),
