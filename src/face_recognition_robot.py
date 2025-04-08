@@ -30,6 +30,7 @@ for i in range(4):
 if cap is None or not cap.isOpened():
     print("Error: Could not open any camera.")
     exit()
+    
 
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
