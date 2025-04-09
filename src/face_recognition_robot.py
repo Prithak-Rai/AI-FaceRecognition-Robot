@@ -19,6 +19,7 @@ preprocess = transforms.Compose([
     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
 
+
 # Load camera
 cap = None
 for i in range(4):
