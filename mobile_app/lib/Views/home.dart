@@ -1,16 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_sqlite_auth_app/Views/add_face.dart';
-// import 'package:flutter_sqlite_auth_app/Components/colors.dart';
 import 'package:flutter_sqlite_auth_app/Components/button.dart';
 import 'package:flutter_sqlite_auth_app/Views/profile.dart';
 import 'package:flutter_sqlite_auth_app/JSON/users.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter_sqlite_auth_app/Views/add_face.dart';
-import 'package:flutter_sqlite_auth_app/Components/button.dart';
-import 'package:flutter_sqlite_auth_app/Views/profile.dart';
-import 'package:flutter_sqlite_auth_app/JSON/users.dart';
-// import 'package:flutter_sqlite_auth_app/Views/settings.dart'; // Assuming you'll create this
-import 'package:flutter_sqlite_auth_app/Views/settings.dart'; // Import the new settings page
+import 'package:flutter_sqlite_auth_app/Views/settings.dart';
+import 'package:flutter_sqlite_auth_app/Views/faces.dart';
 
 class HomePage extends StatefulWidget {
   final Users? profile;
@@ -34,10 +28,17 @@ class _HomePageState extends State<HomePage> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => Profile(profile: widget.profile),
+          builder: (context) => FacesPage(profile: widget.profile), // Pass profile data
         ),
       );
     } else if (index == 2) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => Profile(profile: widget.profile),
+        ),
+      );
+    } else if (index == 3) {
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -262,10 +263,15 @@ class _HomePageState extends State<HomePage> {
               unselectedItemColor: Colors.white70,
               currentIndex: _selectedIndex,
               onTap: _onItemTapped,
+              type: BottomNavigationBarType.fixed, // Add this to support 4 items
               items: const [
                 BottomNavigationBarItem(
                   icon: Icon(Icons.home), 
                   label: 'Home',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.face), 
+                  label: 'Faces',
                 ),
                 BottomNavigationBarItem(
                   icon: Icon(Icons.person), 
