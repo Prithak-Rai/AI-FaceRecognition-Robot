@@ -5,10 +5,24 @@ import os
 from facenet_pytorch import MTCNN, InceptionResnetV1
 import numpy as np
 import torchvision.transforms as transforms
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+import tempfile
 
+# Email configuration
+sender_email = "prithak.khamtu@gmail.com" 
+sender_password = "paykcwhdbymsukrk"
+receiver_email = "prithakhamtu@gmail.com" 
+smtp_server = "smtp.gmail.com"
+smtp_port = 587
+
+# Initialize device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+# Initialize face detection and recognition
 mtcnn = MTCNN(keep_all=True, device=device)
 resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
@@ -31,7 +45,6 @@ if cap is None or not cap.isOpened():
     print("Error: Could not open any camera.")
     exit()
     
-
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
 # Paths
@@ -65,10 +78,38 @@ for person_folder in os.listdir(data_dir):
                         known_face_embeddings.append(embedding)
                         known_face_names.append(person_folder)
 
+def send_email_with_image(image_path):
+    """Send email with the detected unknown person's image attached"""
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = receiver_email
+        msg['Subject'] = "Unknown Person Detected"
+        
+        body = "An unknown person was detected by the security system."
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Attach the image
+        with open(image_path, 'rb') as f:
+            img_data = f.read()
+        image = MIMEImage(img_data, name=os.path.basename(image_path))
+        msg.attach(image)
+        
+        # Send the email
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+        print("Email notification sent successfully!")
+    except Exception as e:
+        print(f"Error sending email: {str(e)}")
+
 # Main loop
 detect_interval = 5
 frame_count = 0
 fps_list = []
+last_unknown_detection_time = 0
+email_cooldown = 60 
 
 # Initialize variables to handle detection
 faces = None
@@ -118,13 +159,19 @@ while True:
                     name = known_name
                     color = (0, 255, 0)
 
-            # Save unknown face
+            # Save unknown face and send email
             if name == "Unknown":
-                timestamp = time.strftime("%Y%m%d-%H%M%S")
-                filename = f"{name}_{timestamp}.jpg"
-                filepath = os.path.join(saved_images_dir, filename)
-                cv2.imwrite(filepath, frame)
-                print(f"Saved unknown face: {filepath}")
+                current_time = time.time()
+                if current_time - last_unknown_detection_time > email_cooldown:
+                    timestamp = time.strftime("%Y%m%d-%H%M%S")
+                    filename = f"{name}_{timestamp}.jpg"
+                    filepath = os.path.join(saved_images_dir, filename)
+                    cv2.imwrite(filepath, frame)
+                    print(f"Saved unknown face: {filepath}")
+                    
+                    # Send email with the image
+                    send_email_with_image(filepath)
+                    last_unknown_detection_time = current_time
 
             # Draw bounding box and label
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
