@@ -14,7 +14,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 
-# Configuration
 DB_PATH = "faces.db"
 SAVED_UNKNOWN_DIR = "Unknown"
 EMAIL_ADDRESS = "prithak.khamtu@gmail.com"
