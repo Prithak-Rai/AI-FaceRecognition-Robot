@@ -13,15 +13,17 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
+from datetime import datetime
 
+# Configuration
 DB_PATH = "faces.db"
 SAVED_UNKNOWN_DIR = "Unknown"
 EMAIL_ADDRESS = "prithak.khamtu@gmail.com"
-EMAIL_PASSWORD = "paykcwhdbymsukrk"
+EMAIL_PASSWORD = "paykcwhdbymsukrk"  # Use Gmail App Password
 RECEIVER_EMAIL = "prithakhamtu@gmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-SIMILARITY_THRESHOLD = 0.5  # Threshold for face recognition
+SIMILARITY_THRESHOLD = 0.5
 
 def setup_models():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -40,7 +42,7 @@ def setup_models():
     
     return device, mtcnn, resnet, preprocess
 
-def load_known_faces(db_path):
+def load_known_faces(db_path, device, resnet, preprocess):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     known_embeddings = []
@@ -67,30 +69,41 @@ def load_known_faces(db_path):
     print(f"✅ Loaded {len(known_names)} face images from DB.")
     return conn, cursor, known_embeddings, known_names
 
-def send_email_with_image(image_path, subject="Unknown Person Detected"):
+def send_email_with_image(cropped_face, subject="Unknown Person Detected"):
     msg = MIMEMultipart()
     msg['From'] = EMAIL_ADDRESS
     msg['To'] = RECEIVER_EMAIL
     msg['Subject'] = subject
     msg.attach(MIMEText("An unknown person was detected by your security system.", 'plain'))
     
-    with open(image_path, 'rb') as f:
+    # Convert cropped face (OpenCV BGR) to RGB for PIL
+    cropped_face_rgb = cv2.cvtColor(cropped_face, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(cropped_face_rgb)
+    
+    # Save the cropped face temporarily
+    temp_path = os.path.join(SAVED_UNKNOWN_DIR, f"temp_cropped_face.jpg")
+    pil_image.save(temp_path)
+    
+    with open(temp_path, 'rb') as f:
         img_data = f.read()
-    msg.attach(MIMEImage(img_data, name=os.path.basename(image_path)))
+    msg.attach(MIMEImage(img_data, name="unknown_face.jpg"))
     
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.send_message(msg)
-        print(f"📧 Email sent with image: {image_path}")
+        print(f"📧 Email sent with cropped face.")
     except Exception as e:
         print(f"Failed to send email: {e}")
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)  # Delete the temp file
 
-def save_unknown_person(frame, embedding, db_cursor):
+def save_unknown_person(cropped_face, embedding, db_cursor):
     try:
-        # Convert frame to JPEG
-        _, img_encoded = cv2.imencode('.jpg', frame)
+        # Convert cropped face to JPEG
+        _, img_encoded = cv2.imencode('.jpg', cropped_face)
         img_bytes = img_encoded.tobytes()
         
         # Convert embedding to bytes
@@ -108,11 +121,9 @@ def save_unknown_person(frame, embedding, db_cursor):
         return False
 
 def main():
-    global device, mtcnn, resnet, preprocess
-    
     # Setup
     device, mtcnn, resnet, preprocess = setup_models()
-    conn, cursor, known_embeddings, known_names = load_known_faces(DB_PATH)
+    conn, cursor, known_embeddings, known_names = load_known_faces(DB_PATH, device, resnet, preprocess)
     
     # Create directory for unknown faces if not exists
     if not os.path.exists(SAVED_UNKNOWN_DIR):
@@ -177,18 +188,18 @@ def main():
 
                     # Handle unknown face
                     if name == "Unknown" and face_hash not in processed_faces:
-                        timestamp = time.strftime("%Y%m%d-%H%M%S")
+                        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                         filename = f"Unknown_{timestamp}.jpg"
                         filepath = os.path.join(SAVED_UNKNOWN_DIR, filename)
                         
-                        # Save the image
-                        cv2.imwrite(filepath, frame)
-                        print(f"📸 Saved unknown face: {filename}")
+                        # Crop and save only the face
+                        cropped_face = frame[y1:y2, x1:x2]
+                        cv2.imwrite(filepath, cropped_face)
                         
                         # Save to database and send email
-                        if save_unknown_person(frame, face_embedding, cursor):
+                        if save_unknown_person(cropped_face, face_embedding, cursor):
                             conn.commit()
-                            send_email_with_image(filepath)
+                            send_email_with_image(cropped_face)
                         
                         # Mark this face as processed
                         processed_faces.add(face_hash)
