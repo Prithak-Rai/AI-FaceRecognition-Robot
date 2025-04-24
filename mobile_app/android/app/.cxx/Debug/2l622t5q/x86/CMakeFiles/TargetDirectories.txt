@@ -1,0 +1,2 @@
+/Users/prithak/Desktop/AI-FaceRecognition-Robot/mobile_app/android/app/.cxx/Debug/2l622t5q/x86/CMakeFiles/edit_cache.dir
+/Users/prithak/Desktop/AI-FaceRecognition-Robot/mobile_app/android/app/.cxx/Debug/2l622t5q/x86/CMakeFiles/rebuild_cache.dir

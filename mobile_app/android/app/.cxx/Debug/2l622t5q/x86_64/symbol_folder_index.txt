@@ -1,0 +1,1 @@
+/Users/prithak/Desktop/AI-FaceRecognition-Robot/mobile_app/build/app/intermediates/cxx/Debug/2l622t5q/obj/x86_64
