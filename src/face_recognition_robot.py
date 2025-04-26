@@ -19,7 +19,7 @@ from datetime import datetime
 DB_PATH = "faces.db"
 SAVED_UNKNOWN_DIR = "Unknown"
 EMAIL_ADDRESS = "prithak.khamtu@gmail.com"
-EMAIL_PASSWORD = "paykcwhdbymsukrk"  # Use Gmail App Password
+EMAIL_PASSWORD = "paykcwhdbymsukrk" 
 RECEIVER_EMAIL = "prithakhamtu@gmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
