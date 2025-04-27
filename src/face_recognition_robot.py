@@ -14,6 +14,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from datetime import datetime
+import logging
 
 # Configuration
 DB_PATH = "faces.db"
@@ -66,7 +67,9 @@ def load_known_faces(db_path, device, resnet, preprocess):
         except Exception as e:
             print(f"Error loading image for {person_name}: {e}")
 
-    print(f"✅ Loaded {len(known_names)} face images from DB.")
+    logging.basicConfig(level=logging.INFO)
+    logging.info("✅Loaded faces.")
+    # print(f"✅ Loaded {len(known_names)} face images from DB.")
     return conn, cursor, known_embeddings, known_names
 
 def send_email_with_image(cropped_face, subject="Unknown Person Detected"):
@@ -136,8 +139,8 @@ def main():
         exit()
 
     # Reduce resolution for performance
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
     # Track processed faces to avoid duplicate captures
     processed_faces = set()
