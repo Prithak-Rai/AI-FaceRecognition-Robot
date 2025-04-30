@@ -72,6 +72,7 @@ def load_known_faces(db_path, device, resnet, preprocess):
     logging.info("✅Loaded faces.")
     return conn, cursor, known_embeddings, known_names
 
+
 def send_email_async(cropped_face, subject="Unknown Person Detected"):
     def _send():
         try:
