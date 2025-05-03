@@ -16,6 +16,7 @@ from email.mime.image import MIMEImage
 from datetime import datetime
 import logging
 import threading
+import serial
 
 # Configuration
 DB_PATH = "faces.db"
@@ -26,6 +27,28 @@ RECEIVER_EMAIL = "prithakhamtu@gmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SIMILARITY_THRESHOLD = 0.5
+SMOOTHING_FACTOR = 0.3  # For smoother Z-axis movements
+
+# Robot Control Config
+SERIAL_PORT = '/dev/cu.usbserial-1120'
+SERIAL_BAUDRATE = 115200
+DEBUG_MODE = False
+
+# Servo angle ranges
+x_min = 0
+x_mid = 75
+x_max = 150
+
+y_min = 0
+y_mid = 90
+y_max = 180
+
+z_min = 80  # Forward position (face far)
+z_max = 220  # Back position (face close)
+
+# Initialize default servo angles
+servo_angles = [x_mid, y_mid, 130, 0]  # x, y, z, claw
+prev_servo_angles = servo_angles.copy()
 
 def setup_models():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -71,7 +94,6 @@ def load_known_faces(db_path, device, resnet, preprocess):
     logging.basicConfig(level=logging.INFO)
     logging.info("✅Loaded faces.")
     return conn, cursor, known_embeddings, known_names
-
 
 def send_email_async(cropped_face, subject="Unknown Person Detected"):
     def _send():
@@ -128,7 +150,55 @@ def save_unknown_person(cropped_face, embedding, db_cursor):
         print(f"Error saving unknown person to database: {e}")
         return False
 
+def map_face_to_servo(face_center, face_size, frame_width, frame_height):
+    x, y = face_center
+    face_width, face_height = face_size
+    
+    # Normalize coordinates (0-1)
+    x_norm = x / frame_width
+    y_norm = y / frame_height
+    
+    # Calculate servo angles (0-180)
+    # X-axis: Inverted (face moves right → robot turns left)
+    servo_x = int((1 - x_norm) * 180)
+    
+    # Y-axis: Not inverted (face moves up → robot looks up)
+    servo_y = int( y_norm * 180)
+    
+    # Z-axis: Based on face size (normalized between 0.1 and 1.0)
+    face_area = face_width * face_height
+    frame_area = frame_width * frame_height
+    size_ratio = face_area / frame_area
+    
+    # Normalize size ratio (adjust these values based on your observations)
+    min_expected_size = 0.02  # Face size when very far
+    max_expected_size = 0.3   # Face size when very close
+    size_norm = (size_ratio - min_expected_size) / (max_expected_size - min_expected_size)
+    size_norm = max(0.0, min(1.0, size_norm))  # Clamp between 0.1 and 1.0
+    
+    # Map to Z servo position (inverted: smaller face → lower Z value)
+    servo_z = int(z_min + ((z_max-z_min) * 1.5) * size_norm )
+    
+    # Constrain to servo limits
+    servo_x = max(x_min, min(x_max, servo_x))
+    servo_y = max(y_min, min(y_max, servo_y))
+    servo_z = max(z_min, min(z_max, servo_z))
+    
+    return [servo_x, servo_y, servo_z, 0]  # [x, y, z, claw]
+
+def send_servo_command(angles, ser):
+    if DEBUG_MODE:
+        print(f"DEBUG: Servo angles: {angles}")
+    else:
+        try:
+            ser.write(bytearray(angles))
+            print(f"Sent servo angles: {angles}")
+        except Exception as e:
+            print(f"Error sending servo command: {e}")
+
 def main():
+    global servo_angles, prev_servo_angles
+    
     # Setup
     device, mtcnn, resnet, preprocess = setup_models()
     conn, cursor, known_embeddings, known_names = load_known_faces(DB_PATH, device, resnet, preprocess)
@@ -136,6 +206,16 @@ def main():
     # Create directory for unknown faces if not exists
     if not os.path.exists(SAVED_UNKNOWN_DIR):
         os.makedirs(SAVED_UNKNOWN_DIR)
+
+    # Initialize serial connection
+    if not DEBUG_MODE:
+        try:
+            ser = serial.Serial(SERIAL_PORT, SERIAL_BAUDRATE)
+            time.sleep(2)
+            print(f"✅ Connected to {SERIAL_PORT} at {SERIAL_BAUDRATE} baud")
+        except Exception as e:
+            print(f"❌ Failed to connect to serial port: {e}")
+            return
 
     # Initialize camera
     cap = cv2.VideoCapture(0)
@@ -164,6 +244,8 @@ def main():
         if not ret:
             break
 
+        frame_height, frame_width = frame.shape[:2]
+
         # Resize for faster detection
         small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
         rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
@@ -171,12 +253,23 @@ def main():
         with torch.no_grad():
             faces, probs = mtcnn.detect(rgb_small_frame)
 
+        # Reset servo angles if no face detected
+        if faces is None:
+            servo_angles = [x_mid, y_mid, 130, 0]
+            if servo_angles != prev_servo_angles:
+                if not DEBUG_MODE:
+                    send_servo_command(servo_angles, ser)
+                prev_servo_angles = servo_angles.copy()
+            continue
+
         if faces is not None:
             for i, box in enumerate(faces):
                 if probs[i] < 0.90:
                     continue
                 x1, y1, x2, y2 = [int(coord * 2) for coord in box]  # Scale back
                 face_img = frame[y1:y2, x1:x2]
+                face_width = x2 - x1
+                face_height = y2 - y1
 
                 try:
                     face_tensor = preprocess(face_img).unsqueeze(0).to(device)
@@ -200,26 +293,48 @@ def main():
                         filename = f"Unknown_{timestamp}.jpg"
                         filepath = os.path.join(SAVED_UNKNOWN_DIR, filename)
                         
-                        # Crop and save only the face
                         cropped_face = frame[y1:y2, x1:x2]
                         cv2.imwrite(filepath, cropped_face)
                         
-                        # Save to database and send email (async)
                         if save_unknown_person(cropped_face, face_embedding, cursor):
                             conn.commit()
                             send_email_async(cropped_face)
                         
-                        # Mark this face as processed
                         processed_faces.add(face_hash)
 
                     # Draw bounding box
                     color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    cv2.putText(frame, name, (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    cv2.putText(
+                        frame, 
+                        name, 
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 
+                        0.6, 
+                        color, 
+                        2
+                    )
 
                 except Exception as e:
                     print(f"Face processing error: {e}")
+
+                # Face following logic
+                face_center = ((x1 + x2) // 2, (y1 + y2) // 2)
+                new_angles = map_face_to_servo(
+                    face_center, 
+                    (face_width, face_height), 
+                    frame_width, 
+                    frame_height
+                )
+                
+                # Apply smoothing to Z-axis only
+                smoothed_z = int(prev_servo_angles[2] * (1-SMOOTHING_FACTOR) + new_angles[2] * SMOOTHING_FACTOR)
+                servo_angles = [new_angles[0], new_angles[1], smoothed_z, 0]
+
+                if servo_angles != prev_servo_angles:
+                    if not DEBUG_MODE:
+                        send_servo_command(servo_angles, ser)
+                    prev_servo_angles = servo_angles.copy()
 
         cv2.imshow("Face Recognition", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -229,7 +344,8 @@ def main():
     cap.release()
     cv2.destroyAllWindows()
     conn.close()
+    if not DEBUG_MODE and 'ser' in locals():
+        ser.close()
 
 if __name__ == "__main__":
     main()
-    
