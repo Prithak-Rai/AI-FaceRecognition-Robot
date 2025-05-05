@@ -16,7 +16,8 @@ from email.mime.image import MIMEImage
 from datetime import datetime
 import logging
 import threading
-import serial
+import serial 
+
 
 # Configuration
 DB_PATH = "faces.db"
