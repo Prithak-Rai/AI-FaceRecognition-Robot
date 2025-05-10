@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:app/Views/auth.dart';
+import 'package:app/services/mqtt_service.dart';
 // import 'package:firebase_core/firebase_core.dart';
-// import 'firebase_options.dart';  // Make sure you have this file after running flutterfire configure
+// import 'firebase_options.dart'; // Make sure you have this file after running flutterfire configure
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // // Initialize Firebase
   // await Firebase.initializeApp(
-  //   options: DefaultFirebaseOptions.currentPlatform,  // You need the generated file from FlutterFire CLI
+  //   options: DefaultFirebaseOptions.currentPlatform, // You need the generated file from FlutterFire CLI
   // );
-
+  
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -22,8 +24,16 @@ void main() async {
       statusBarIconBrightness: Brightness.dark,
     ),
   );
-
-  runApp(const MyApp());
+  
+  final mqttService = MQTTService();
+  await mqttService.initialize();
+  
+  runApp(
+    ChangeNotifierProvider.value(
+      value: mqttService,
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -33,7 +43,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Flutter Demo',
+      title: 'FaceBot Controller',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF009CFF)),
         useMaterial3: true,

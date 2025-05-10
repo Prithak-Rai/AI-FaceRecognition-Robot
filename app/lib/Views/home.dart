@@ -5,6 +5,7 @@ import 'package:app/Views/profile.dart';
 import 'package:app/JSON/users.dart';
 import 'package:app/Views/settings.dart';
 import 'package:app/Views/faces.dart';
+import 'package:app/Views/notification.dart'; // Add this import
 
 class HomePage extends StatefulWidget {
   final Users? profile;
@@ -48,6 +49,16 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // Method to navigate to notifications screen
+  void _navigateToNotifications() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const NotificationsScreen(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -62,7 +73,40 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
       child: Scaffold(
-        backgroundColor: Colors.transparent, 
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: const Text(
+            'FaceBot',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          actions: [
+            // Notification button
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.notifications_outlined, color: Colors.white),
+                  onPressed: _navigateToNotifications,
+                ),
+                // Notification badge - you can make this dynamic based on unread notifications
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
         body: SingleChildScrollView(
           child: SafeArea(
             child: Padding(
@@ -199,6 +243,31 @@ class _HomePageState extends State<HomePage> {
                             builder: (context) => const AddFacePage()),
                       );
                     },
+                  ),
+                  
+                  const SizedBox(height: 15),
+                  
+                  // Notifications button
+                  InkWell(
+                    onTap: _navigateToNotifications,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.notifications_active, color: Colors.white),
+                          const SizedBox(width: 10),
+                          const Text(
+                            "Check Notifications",
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                   
                   const SizedBox(height: 15),
