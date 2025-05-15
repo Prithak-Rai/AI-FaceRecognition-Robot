@@ -18,6 +18,7 @@ import logging
 import threading
 import serial 
 
+
 # Configuration
 DB_PATH = "faces.db"
 SAVED_UNKNOWN_DIR = "Unknown"
