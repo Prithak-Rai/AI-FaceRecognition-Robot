@@ -24,18 +24,23 @@ import paho.mqtt.client as mqtt
 # Configuration
 DB_PATH = "faces.db"
 SAVED_UNKNOWN_DIR = "Unknown"
-EMAIL_ADDRESS = "prithak.khamtu@gmail.com"
-EMAIL_PASSWORD = "paykcwhdbymsukrk" 
+EMAIL_ADDRESS = "smartfacebot@gmail.com"
+EMAIL_PASSWORD = "pbmd izfw indc pmbm" 
 RECEIVER_EMAIL = "prithakhamtu@gmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SIMILARITY_THRESHOLD = 0.5
 SMOOTHING_FACTOR = 0.3  # For smoother Z-axis movements
+EMAIL_COOLDOWN = 5  # Cooldown time in seconds for email notifications
 
 # Robot Control Config
 SERIAL_PORT = '/dev/cu.usbserial-1120'
 SERIAL_BAUDRATE = 115200
 DEBUG_MODE = False
+
+# Multi-face detection settings
+MAX_FACES_FOR_TRACKING = 1  # Only track when this many faces or fewer are detected
+MULTI_FACE_COOLDOWN = 2.0   # Seconds to wait before resuming tracking after multiple faces detected
 
 # MQTT Configuration
 MQTT_BROKER = "broker.emqx.io"  # Public broker for testing
@@ -48,6 +53,7 @@ MQTT_TOPIC_STATUS = "facebot/status"    # Topic for status updates
 MQTT_TOPIC_ROBOT_CONTROL = "facebot/robot/control"  # New topic for robot control
 MQTT_TOPIC_CAMERA_SETTINGS = "facebot/camera/settings"  # New topic for camera settings
 MQTT_TOPIC_SYSTEM_SETTINGS = "facebot/system/settings"  # New topic for system settings
+MQTT_TOPIC_SIGNUPS = "facebot/signups"
 
 # Servo angle ranges
 x_min = 0
@@ -64,6 +70,10 @@ z_max = 220  # Back position (face close)
 # Initialize default servo angles
 servo_angles = [x_mid, y_mid, 130, 0]  # x, y, z, claw
 prev_servo_angles = servo_angles.copy()
+
+# Multi-face tracking variables
+last_multi_face_time = 0
+is_tracking_paused = False
 
 # MQTT Client
 mqtt_client = None
@@ -83,6 +93,7 @@ def on_connect(client, userdata, flags, rc):
     logger.info(f"Connected to MQTT broker with result code {rc}")
     # Subscribe to command topic for remote control
     client.subscribe(f"{MQTT_TOPIC_COMMAND}")
+    client.subscribe(MQTT_TOPIC_SIGNUPS)
     # Publish online status
     client.publish(MQTT_TOPIC_STATUS, json.dumps({
         "type": "robot_status",
@@ -90,11 +101,100 @@ def on_connect(client, userdata, flags, rc):
         "timestamp": datetime.now().isoformat()
     }))
 
+# Add this function to handle signup emails
+def handle_signup_email(payload):
+    try:
+        data = json.loads(payload)
+        if data.get('type') == 'new_signup':
+            email = data['email']
+            timestamp = data.get('timestamp', datetime.now().isoformat())
+            action = data.get('action', 'new_signup')
+            
+            if action == 'account_created':
+                # Send welcome email for new account
+                subject = "Welcome to FaceBot - Account Created Successfully!"
+                body = f"""
+                Dear User,
+
+                Welcome to FaceBot! Your account has been successfully created.
+
+                Thank you for choosing FaceBot for your security needs. You can now:
+                - Monitor your security system
+                - Receive real-time notifications
+                - Manage your face recognition settings
+                - Access your security dashboard
+
+                If you didn't create this account, please contact support immediately.
+
+                Account Creation Time: {timestamp}
+
+                Best regards,
+                The FaceBot Team
+                """
+            else:
+                # Regular signup notification
+                subject = "Welcome to FaceBot!"
+                body = f"""
+                Thank you for signing up with FaceBot!
+                
+                Your account has been successfully created.
+                
+                If you didn't request this, please contact support immediately.
+                
+                Signup time: {timestamp}
+                """
+            
+            msg = MIMEMultipart()
+            msg['From'] = EMAIL_ADDRESS
+            msg['To'] = email
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain'))
+            
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.starttls()
+                server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                server.send_message(msg)
+            
+            logger.info(f"Sent welcome email to {email}")
+            print(f"✓ Sent welcome email to {email}")
+            
+            # Also send notification to admin
+            admin_msg = MIMEMultipart()
+            admin_msg['From'] = EMAIL_ADDRESS
+            admin_msg['To'] = RECEIVER_EMAIL
+            admin_msg['Subject'] = f"New FaceBot Signup: {email}"
+            admin_msg.attach(MIMEText(f"""
+            A new user has signed up for FaceBot:
+            
+            Email: {email}
+            Timestamp: {timestamp}
+            Action: {action}
+            
+            This is an automated notification from the FaceBot system.
+            """, 'plain'))
+            
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.starttls()
+                server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                server.send_message(admin_msg)
+            
+            logger.info(f"Sent admin notification about new signup: {email}")
+            print(f"✓ Sent admin notification about new signup: {email}")
+            
+    except Exception as e:
+        logger.error(f"Error processing signup email: {e}")
+        print(f"✗ Error processing signup email: {e}")
+
 def on_message(client, userdata, msg):
     logger.info(f"Received message on {msg.topic}: {msg.payload.decode()}")
     try:
         payload = json.loads(msg.payload.decode())
-        
+
+        if msg.topic == MQTT_TOPIC_SIGNUPS:
+            handle_signup_email(payload)
+            
+        return
+    
         if msg.topic == MQTT_TOPIC_COMMAND:
             if "command" in payload:
                 cmd = payload["command"]
@@ -105,8 +205,8 @@ def on_message(client, userdata, msg):
                     logger.info("Received shutdown command")
                     # Implement shutdown logic here
                 elif cmd == "status":
-                    send_status_update()
-                    
+                    send_status_update()     
+
         elif msg.topic == MQTT_TOPIC_ROBOT_CONTROL:
             if "action" in payload:
                 action = payload["action"]
@@ -156,6 +256,16 @@ def on_message(client, userdata, msg):
                         global notification_cooldown
                         notification_cooldown = payload["value"]
                         logger.info(f"Notification cooldown changed to {notification_cooldown} seconds")
+                elif setting == "max_faces_for_tracking":
+                    if "value" in payload:
+                        global MAX_FACES_FOR_TRACKING
+                        MAX_FACES_FOR_TRACKING = payload["value"]
+                        logger.info(f"Max faces for tracking changed to {MAX_FACES_FOR_TRACKING}")
+                elif setting == "multi_face_cooldown":
+                    if "value" in payload:
+                        global MULTI_FACE_COOLDOWN
+                        MULTI_FACE_COOLDOWN = payload["value"]
+                        logger.info(f"Multi-face cooldown changed to {MULTI_FACE_COOLDOWN} seconds")
                         
     except Exception as e:
         logger.error(f"Error processing MQTT message: {e}")
@@ -167,7 +277,8 @@ def send_status_update():
             "type": "robot_status",
             "status": "online",
             "uptime": time.time() - startup_time,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "tracking_paused": is_tracking_paused
         }
         mqtt_client.publish(MQTT_TOPIC_STATUS, json.dumps(status_data))
         logger.info("Status update sent")
@@ -420,6 +531,67 @@ def send_servo_command(angles, ser):
         except Exception as e:
             logger.error(f"✗ Error sending servo command: {e}")
 
+def check_multiple_faces(faces, probs):
+    """
+    Check if multiple valid faces are detected and handle tracking pause logic
+    Returns: (should_track, primary_face_index)
+    """
+    global last_multi_face_time, is_tracking_paused
+    
+    # Count valid faces (above confidence threshold)
+    valid_faces = []
+    for i, (face, prob) in enumerate(zip(faces, probs)):
+        if prob >= 0.90:  # Same threshold as main detection
+            valid_faces.append(i)
+    
+    current_time = time.time()
+    
+    # If more than allowed faces detected
+    if len(valid_faces) > MAX_FACES_FOR_TRACKING:
+        last_multi_face_time = current_time
+        if not is_tracking_paused:
+            is_tracking_paused = True
+            logger.info(f"⚠️  Multiple faces detected ({len(valid_faces)}), pausing robot tracking for safety")
+            
+            # Send MQTT notification about multiple faces
+            if mqtt_client and mqtt_client.is_connected():
+                send_mqtt_notification({
+                    "type": "tracking_status",
+                    "title": "Multiple Faces Detected",
+                    "body": f"Robot tracking paused - {len(valid_faces)} faces detected",
+                    "timestamp": datetime.now().isoformat()
+                })
+        
+        return False, None
+    
+    # Check if we should resume tracking after cooldown
+    elif len(valid_faces) <= MAX_FACES_FOR_TRACKING and is_tracking_paused:
+        time_since_multi_face = current_time - last_multi_face_time
+        
+        if time_since_multi_face >= MULTI_FACE_COOLDOWN:
+            is_tracking_paused = False
+            logger.info("✅ Resuming robot tracking - single face detected after cooldown")
+            
+            # Send MQTT notification about resuming tracking
+            if mqtt_client and mqtt_client.is_connected():
+                send_mqtt_notification({
+                    "type": "tracking_status", 
+                    "title": "Tracking Resumed",
+                    "body": "Robot tracking resumed - safe to track single face",
+                    "timestamp": datetime.now().isoformat()
+                })
+        else:
+            # Still in cooldown period
+            remaining_cooldown = MULTI_FACE_COOLDOWN - time_since_multi_face
+            logger.debug(f"Still in cooldown period, {remaining_cooldown:.1f}s remaining")
+            return False, None
+    
+    # Return tracking permission and index of first valid face (if any)
+    if len(valid_faces) > 0 and not is_tracking_paused:
+        return True, valid_faces[0]
+    else:
+        return False, None
+
 def health_check_thread(stop_event):
     """Thread to periodically send health check status updates"""
     while not stop_event.is_set():
@@ -435,13 +607,177 @@ def health_check_thread(stop_event):
                 break
             time.sleep(1)
 
+def fetch_current_user_email(max_retries=3, retry_delay=2):
+    """Fetch the current user's email from the database through MQTT with retries"""
+    for attempt in range(max_retries):
+        try:
+            print(f"\n=== Fetching Current User Email (Attempt {attempt + 1}/{max_retries}) ===")
+            # Create a temporary MQTT client for fetching user data
+            temp_client = mqtt.Client(client_id=f"facebot_fetch_user_{int(time.time())}")
+            
+            # Create an event to wait for response
+            email_received = threading.Event()
+            current_email = [None]  # Use list to store email in callback
+            
+            def on_connect(client, userdata, flags, rc):
+                print(f"✓ Connected to MQTT broker with result code {rc}")
+                # Subscribe to the response topic first
+                client.subscribe('facebot/current_user')
+                print("✓ Subscribed to 'facebot/current_user' topic")
+                
+                # Wait a moment for subscription to be established
+                time.sleep(0.5)
+                
+                # Then request current user email
+                print("\nRequesting current user email...")
+                client.publish('facebot/request_current_user', json.dumps({
+                    'type': 'request_current_user',
+                    'timestamp': datetime.now().isoformat()
+                }))
+                print("✓ Published request to 'facebot/request_current_user'")
+            
+            def on_message(client, userdata, msg):
+                try:
+                    print(f"\nReceived message on topic: {msg.topic}")
+                    data = json.loads(msg.payload.decode())
+                    print(f"Message data: {data}")
+                    
+                    if msg.topic == 'facebot/current_user' and data.get('type') == 'current_user_email':
+                        current_email[0] = data.get('email')
+                        print(f"✓ Received user email: {current_email[0]}")
+                        email_received.set()
+                except Exception as e:
+                    print(f"✗ Error processing user email message: {e}")
+            
+            # Set up callbacks
+            temp_client.on_connect = on_connect
+            temp_client.on_message = on_message
+            
+            # Connect and start loop
+            temp_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+            temp_client.loop_start()
+            
+            # Wait for response with longer timeout
+            print("\nWaiting for response...")
+            if email_received.wait(timeout=10.0):  # Increased timeout to 10 seconds
+                print(f"✓ Successfully received email: {current_email[0]}")
+                temp_client.loop_stop()
+                temp_client.disconnect()
+                return current_email[0]
+            else:
+                print(f"✗ Timeout waiting for current user email (Attempt {attempt + 1})")
+                temp_client.loop_stop()
+                temp_client.disconnect()
+                if attempt < max_retries - 1:
+                    print(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                
+        except Exception as e:
+            print(f"✗ Error fetching current user email (Attempt {attempt + 1}): {e}")
+            if 'temp_client' in locals():
+                try:
+                    temp_client.loop_stop()
+                    temp_client.disconnect()
+                except:
+                    pass
+            if attempt < max_retries - 1:
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+    
+    print("=== Failed to fetch current user email after all attempts ===\n")
+    return None
+
+# Updated main function approach
+def fetch_current_user_email_after_mqtt():
+    """Fetch user email after MQTT client is established"""
+    global mqtt_client
+    
+    if not mqtt_client or not mqtt_client.is_connected():
+        print("✗ Main MQTT client not connected")
+        return None
+    
+    print("\n=== Fetching Current User Email (After MQTT Setup) ===")
+    
+    # Create an event to wait for response
+    email_received = threading.Event()
+    current_email = [None]
+    
+    def check_for_user_email(client, userdata, msg):
+        try:
+            if msg.topic == 'facebot/current_user':
+                data = json.loads(msg.payload.decode())
+                print(f"Received user email data: {data}")
+                
+                if data.get('type') == 'current_user_email':
+                    current_email[0] = data.get('email')
+                    print(f"✓ Received user email: {current_email[0]}")
+                    email_received.set()
+        except Exception as e:
+            print(f"✗ Error processing user email: {e}")
+    
+    # Store the original message handler
+    original_handler = mqtt_client.on_message
+    
+    # Create a combined handler
+    def combined_handler(client, userdata, msg):
+        # First call the original handler
+        if original_handler:
+            original_handler(client, userdata, msg)
+        # Then check for user email
+        check_for_user_email(client, userdata, msg)
+    
+    # Set the combined handler
+    mqtt_client.on_message = combined_handler
+    
+    # Subscribe and request
+    mqtt_client.subscribe('facebot/current_user')
+    print("✓ Subscribed to current user topic")
+    
+    time.sleep(0.5)  # Brief pause
+    
+    mqtt_client.publish('facebot/request_current_user', json.dumps({
+        'type': 'request_current_user',
+        'timestamp': datetime.now().isoformat()
+    }))
+    print("✓ Requested current user email")
+    
+    # Wait for response
+    if email_received.wait(timeout=10.0):
+        result = current_email[0]
+        print(f"✓ Got email: {result}")
+    else:
+        result = None
+        print("✗ Timeout waiting for email")
+    
+    # Restore original handler
+    mqtt_client.on_message = original_handler
+    
+    return result
+
 def main():
-    global servo_angles, prev_servo_angles, startup_time
+    global servo_angles, prev_servo_angles, startup_time, last_multi_face_time, is_tracking_paused
     
     # Record startup time for uptime tracking
     startup_time = time.time()
     
-    logger.info("Starting FaceBot in headless mode")
+    print("\n=== FaceBot Startup ===")
+    logger.info("Starting FaceBot in headless mode with multi-face safety")
+    
+    # Fetch current user's email at startup with retries
+    print("\nFetching current user email...")
+    current_user_email = fetch_current_user_email(max_retries=3, retry_delay=2)
+    
+    if current_user_email:
+        print(f"\n✓ Current user email: {current_user_email}")
+        logger.info(f"Current user email: {current_user_email}")
+        # Update RECEIVER_EMAIL with current user's email
+        global RECEIVER_EMAIL
+        RECEIVER_EMAIL = current_user_email
+        print(f"✓ Updated RECEIVER_EMAIL to: {RECEIVER_EMAIL}")
+    else:
+        print("\n✗ Could not fetch current user email, using default email")
+        logger.warning("Could not fetch current user email, using default email")
+        print(f"Default email: {RECEIVER_EMAIL}")
     
     # Ensure directories exist
     if not os.path.exists(SAVED_UNKNOWN_DIR):
@@ -507,6 +843,7 @@ def main():
     # Notification cooldown for unknown faces (seconds)
     notification_cooldown = 30
     last_notification_time = 0
+    last_email_time = 0  # Track last email sent time
     
     # Setup health check thread
     stop_event = threading.Event()
@@ -518,7 +855,7 @@ def main():
         send_mqtt_notification({
             "type": "system_status",
             "title": "FaceBot System Active",
-            "body": "Face recognition and tracking is now active",
+            "body": f"Face recognition and tracking is now active (Max {MAX_FACES_FOR_TRACKING} face tracking)",
             "timestamp": datetime.now().isoformat()
         })
 
@@ -551,11 +888,33 @@ def main():
                     prev_servo_angles = servo_angles.copy()
                 continue
 
+            # Check for multiple faces and determine if tracking should be enabled
+            should_track, primary_face_index = check_multiple_faces(faces, probs)
+
             if faces is not None:
+                valid_faces_processed = 0
+                
+                # In the main loop where faces are detected, modify the cropping:
+                EXPAND_FACTOR = 0.2
+
                 for i, box in enumerate(faces):
                     if probs[i] < 0.90:
                         continue
+                        
                     x1, y1, x2, y2 = [int(coord * 2) for coord in box]  # Scale back
+                    
+                    # Calculate expanded bounding box
+                    width = x2 - x1
+                    height = y2 - y1
+                    expand_w = int(width * EXPAND_FACTOR)
+                    expand_h = int(height * EXPAND_FACTOR)
+                    
+                    # Apply expansion while staying within frame bounds
+                    x1 = max(0, x1 - expand_w)
+                    y1 = max(0, y1 - expand_h)
+                    x2 = min(frame_width, x2 + expand_w)
+                    y2 = min(frame_height, y2 + expand_h)
+                    
                     face_img = frame[y1:y2, x1:x2]
                     face_width = x2 - x1
                     face_height = y2 - y1
@@ -576,21 +935,35 @@ def main():
                                 name = known_name
                                 break
 
-                        # Handle unknown face
+                        # In the unknown face handling section:
                         if name == "Unknown" and face_hash not in processed_faces:
                             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                             filename = f"Unknown_{timestamp}.jpg"
                             filepath = os.path.join(SAVED_UNKNOWN_DIR, filename)
                             
+                            # Save the larger cropped face
                             cropped_face = frame[y1:y2, x1:x2]
+                            
+                            # Ensure minimum size (e.g., 300x300 pixels)
+                            min_size = 300
+                            if cropped_face.shape[0] < min_size or cropped_face.shape[1] < min_size:
+                                # Calculate scaling factor
+                                scale = max(min_size / cropped_face.shape[0], min_size / cropped_face.shape[1])
+                                new_size = (int(cropped_face.shape[1] * scale), int(cropped_face.shape[0] * scale))
+                                cropped_face = cv2.resize(cropped_face, new_size, interpolation=cv2.INTER_LINEAR)
+                            
                             cv2.imwrite(filepath, cropped_face)
                             
                             if save_unknown_person(cropped_face, face_embedding, cursor):
                                 conn.commit()
-                                send_email_async(cropped_face)
+                                
+                                # Check if enough time has passed since last email
+                                if current_time - last_email_time >= EMAIL_COOLDOWN:
+                                    send_email_async(cropped_face)
+                                    last_email_time = current_time
+                                    logger.info(f"Email sent for unknown face detection (cooldown: {EMAIL_COOLDOWN}s)")
                                 
                                 # Send MQTT notification with cooldown
-                                current_time = time.time()
                                 if current_time - last_notification_time > notification_cooldown:
                                     if mqtt_success:
                                         success = send_unknown_face_notification(cropped_face)
@@ -599,12 +972,22 @@ def main():
                             
                             processed_faces.add(face_hash)
 
-                        # Draw bounding box
-                        color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+                        # Draw bounding box with different colors based on tracking status
+                        if valid_faces_processed > MAX_FACES_FOR_TRACKING:
+                            # Multiple faces - use yellow for warning
+                            color = (0, 255, 255)  # Yellow
+                            status_text = f"{name} (TRACKING PAUSED)"
+                        elif name != "Unknown":
+                            color = (0, 255, 0)  # Green for known
+                            status_text = name
+                        else:
+                            color = (0, 0, 255)  # Red for unknown
+                            status_text = name
+                            
                         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                         cv2.putText(
                             frame, 
-                            name, 
+                            status_text, 
                             (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 
                             0.6, 
@@ -612,26 +995,63 @@ def main():
                             2
                         )
 
+                        # Face following logic - only for the primary face when tracking is allowed
+                        if should_track and i == primary_face_index:
+                            face_center = ((x1 + x2) // 2, (y1 + y2) // 2)
+                            new_angles = map_face_to_servo(
+                                face_center, 
+                                (face_width, face_height), 
+                                frame_width, 
+                                frame_height
+                            )
+                            
+                            # Apply smoothing to Z-axis only
+                            smoothed_z = int(prev_servo_angles[2] * (1-SMOOTHING_FACTOR) + new_angles[2] * SMOOTHING_FACTOR)
+                            servo_angles = [new_angles[0], new_angles[1], smoothed_z, 0]
+
+                            if servo_angles != prev_servo_angles:
+                                if not DEBUG_MODE:
+                                    send_servo_command(servo_angles, ser)
+                                prev_servo_angles = servo_angles.copy()
+
                     except Exception as e:
                         logger.error(f"Face processing error: {e}")
 
-                    # Face following logic
-                    face_center = ((x1 + x2) // 2, (y1 + y2) // 2)
-                    new_angles = map_face_to_servo(
-                        face_center, 
-                        (face_width, face_height), 
-                        frame_width, 
-                        frame_height
-                    )
-                    
-                    # Apply smoothing to Z-axis only
-                    smoothed_z = int(prev_servo_angles[2] * (1-SMOOTHING_FACTOR) + new_angles[2] * SMOOTHING_FACTOR)
-                    servo_angles = [new_angles[0], new_angles[1], smoothed_z, 0]
-
-                    if servo_angles != prev_servo_angles:
+                # If tracking is paused due to multiple faces, return to center position
+                if not should_track and valid_faces_processed > MAX_FACES_FOR_TRACKING:
+                    center_angles = [x_mid, y_mid, 130, 0]
+                    if center_angles != prev_servo_angles:
                         if not DEBUG_MODE:
-                            send_servo_command(servo_angles, ser)
-                        prev_servo_angles = servo_angles.copy()
+                            send_servo_command(center_angles, ser)
+                        prev_servo_angles = center_angles.copy()
+                        logger.debug("Robot returned to center position due to multiple faces")
+
+            # Add status indicator on frame
+            status_color = (0, 255, 0) if not is_tracking_paused else (0, 255, 255)
+            status_text = "TRACKING" if not is_tracking_paused else "PAUSED - MULTIPLE FACES"
+            cv2.putText(
+                frame,
+                status_text,
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                status_color,
+                2
+            )
+            
+            # Add face count indicator
+            if faces is not None:
+                valid_face_count = sum(1 for prob in probs if prob >= 0.90)
+                count_text = f"FACES: {valid_face_count}"
+                cv2.putText(
+                    frame,
+                    count_text,
+                    (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2
+                )
 
             cv2.imshow("Face Recognition", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
