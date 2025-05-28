@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:mqtt_client/mqtt_client.dart';
+import 'package:mqtt_client/mqtt_server_client.dart';
+import 'dart:convert';
 import 'package:app/Components/button.dart';
 import 'package:app/Components/colors.dart';
 import 'package:app/Components/textfield.dart';
 import 'package:app/JSON/users.dart';
 import 'package:app/Views/login.dart';
-import 'package:app/Views/home.dart'; 
-
+import 'package:app/Views/home.dart';
 import '../SQLite/database_helper.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -23,8 +25,64 @@ class _SignupScreenState extends State<SignupScreen> {
   final confirmPassword = TextEditingController();
   final db = DatabaseHelper();
 
-  bool isSignupTrue = false; 
-  String errorMessage = "";  
+  bool isSignupTrue = false;
+  String errorMessage = "";
+  MqttServerClient? mqttClient;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupMqtt();
+  }
+
+  @override
+  void dispose() {
+    mqttClient?.disconnect();
+    super.dispose();
+  }
+
+  Future<void> _setupMqtt() async {
+    mqttClient = MqttServerClient('broker.emqx.io', 'flutter_client_${DateTime.now().millisecondsSinceEpoch}');
+    mqttClient!.logging(on: false);
+    mqttClient!.keepAlivePeriod = 60;
+    mqttClient!.onDisconnected = _onDisconnected;
+    
+    final connMess = MqttConnectMessage()
+        .withClientIdentifier('flutter_client')
+        .startClean();
+    mqttClient!.connectionMessage = connMess;
+
+    try {
+      await mqttClient!.connect();
+    } catch (e) {
+      print('MQTT connection exception: $e');
+      mqttClient!.disconnect();
+    }
+  }
+
+  void _onDisconnected() {
+    print('MQTT disconnected');
+  }
+
+  Future<void> _sendSignupEmail(String email) async {
+    if (mqttClient == null || mqttClient!.connectionStatus!.state != MqttConnectionState.connected) {
+      await _setupMqtt();
+    }
+
+    final builder = MqttClientPayloadBuilder();
+    builder.addString(jsonEncode({
+      'type': 'new_signup',
+      'email': email,
+      'timestamp': DateTime.now().toIso8601String(),
+      'action': 'account_created'
+    }));
+
+    mqttClient!.publishMessage(
+      'facebot/signups',
+      MqttQos.atLeastOnce,
+      builder.payload!,
+    );
+  }
 
   signUp() async {
     // Validate if fields are empty
@@ -64,6 +122,18 @@ class _SignupScreenState extends State<SignupScreen> {
     ));
 
     if (res > 0) {
+      // Send email via MQTT
+      await _sendSignupEmail(email.text);
+      
+      // Show success message
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Account created successfully! Please check your email for confirmation."),
+          backgroundColor: Colors.green,
+        ),
+      );
+      
       // Fetch the user details for the homepage
       Users? usrDetails = await db.getUser(usrName.text);
 
@@ -73,7 +143,7 @@ class _SignupScreenState extends State<SignupScreen> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => HomePage(profile: usrDetails), // Navigate to HomePage
+            builder: (context) => HomePage(profile: usrDetails),
           ),
         );
       }

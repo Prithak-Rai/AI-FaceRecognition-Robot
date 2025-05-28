@@ -97,7 +97,9 @@ class AddFacePageState extends State<AddFacePage> {
       // We're already in the Faces section, but navigate to the main Faces page
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => FacesPage(profile: widget.profile)),
+        MaterialPageRoute(
+          builder: (context) => const FacesScreen(),
+        ),
       );
     } else if (index == 2) {
       Navigator.pushReplacement(

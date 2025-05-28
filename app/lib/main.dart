@@ -29,8 +29,10 @@ void main() async {
   await mqttService.initialize();
   
   runApp(
-    ChangeNotifierProvider.value(
-      value: mqttService,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: mqttService),
+      ],
       child: const MyApp(),
     ),
   );

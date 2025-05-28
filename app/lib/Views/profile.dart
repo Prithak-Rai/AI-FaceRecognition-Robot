@@ -1,16 +1,37 @@
 import 'package:flutter/material.dart';
-import 'package:app/Components/button.dart';
-import 'package:app/JSON/users.dart';
-import 'package:app/Views/login.dart';
 import 'package:app/Views/home.dart';
-import 'package:app/Views/edit_profile.dart';
 import 'package:app/Views/settings.dart';
-import 'package:app/Views/faces.dart'; // Import the faces page
+import 'package:app/Views/faces.dart';
+import 'package:app/JSON/users.dart';
+import 'package:app/Components/button.dart';
+import 'package:app/Views/login.dart';
+import 'package:app/Views/edit_profile.dart';
 
 class Profile extends StatelessWidget {
   final Users? profile;
 
   const Profile({super.key, this.profile});
+
+  void _onItemTapped(int index, BuildContext context) {
+    if (index == 0) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => HomePage(profile: profile)),
+      );
+    // } else if (index == 1) {
+    //   Navigator.pushReplacement(
+    //     context,
+    //     MaterialPageRoute(
+    //       builder: (context) => const FacesScreen(),
+    //     ),
+    //   );
+    } else if (index == 2) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const SettingsPage()),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -237,36 +258,16 @@ class Profile extends StatelessWidget {
           unselectedItemColor: Colors.grey.shade400,
           currentIndex: 2, // Set Profile (index 2) as selected
           type: BottomNavigationBarType.fixed, // Required for 4+ items
-          onTap: (index) {
-            if (index == 0) { // Home
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => HomePage(profile: profile)),
-              );
-            } else if (index == 1) { // Faces
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => FacesPage(profile: profile)),
-              );
-            } else if (index == 3) { // Settings
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const SettingsPage(),
-                ),
-              );
-            }
-            // No need to handle index 2 (Profile) as we're already on the Profile page
-          },
+          onTap: (index) => _onItemTapped(index, context),
           items: const [
             BottomNavigationBarItem(
               icon: Icon(Icons.home),
               label: 'Home',
             ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.face),
-              label: 'Faces',
-            ),
+            // BottomNavigationBarItem(
+            //   icon: Icon(Icons.face),
+            //   label: 'Faces',
+            // ),
             BottomNavigationBarItem(
               icon: Icon(Icons.person),
               label: 'Profile',

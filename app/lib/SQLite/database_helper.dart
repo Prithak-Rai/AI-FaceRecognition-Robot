@@ -173,4 +173,21 @@ class DatabaseHelper {
       return 0;
     }
   }
+
+  // Get current user (most recently logged in)
+  Future<Users?> getCurrentUser() async {
+    final Database db = await initDB();
+    try {
+      // Get the most recently logged in user
+      var res = await db.query(
+        "users",
+        orderBy: "usrId DESC",
+        limit: 1
+      );
+      return res.isNotEmpty ? Users.fromMap(res.first) : null;
+    } catch (e) {
+      print("Error getting current user: $e");
+      return null;
+    }
+  }
 }
